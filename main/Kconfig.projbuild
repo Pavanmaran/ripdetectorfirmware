@@ -1,0 +1,137 @@
+menu "Example Configuration"
+
+    # Configuration options here...
+
+
+
+
+menu "Firmware Upgrade Configuration"
+    comment "Firmware Upgrade Configuration"
+
+    config EXAMPLE_FIRMWARE_UPGRADE_URL
+        string "Firmware Upgrade URL Endpoint"
+        default "https://192.168.0.3:8070/hello_world.bin"
+        help
+            URL of server which hosts the firmware image.
+
+    config EXAMPLE_USE_CERT_BUNDLE
+        bool "Enable Certificate Bundle"
+        default y
+        depends on MBEDTLS_CERTIFICATE_BUNDLE
+        help
+            Enable trusted root certificate bundle. This approach allows OTA updates functional with any public server without the requirement to explicitly add its server certificate.
+
+    config EXAMPLE_FIRMWARE_UPGRADE_URL_FROM_STDIN
+        bool
+        default y if EXAMPLE_FIRMWARE_UPGRADE_URL = "FROM_STDIN"
+
+    config EXAMPLE_SKIP_COMMON_NAME_CHECK
+        bool "Skip Server Certificate CN Fieldcheck"
+        default n
+        help
+            This allows you to skip the validation of the OTA server certificate CN field.
+
+    config EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
+        bool "Support Firmware Upgrade Bind Specified Interface"
+        default n
+        help
+            This allows you to bind a specified interface in the OTA example.
+
+    choice EXAMPLE_FIRMWARE_UPGRADE_BIND_IF_TYPE
+        prompt "Choose OTA Data Bind Interface"
+        default EXAMPLE_FIRMWARE_UPGRADE_BIND_IF_STA
+        depends on EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
+        help
+            Select which interface type of OTA data go through.
+
+        config EXAMPLE_FIRMWARE_UPGRADE_BIND_IF_STA
+            bool "Bind WiFi Station Interface"
+            depends on EXAMPLE_CONNECT_WIFI
+            help
+                Select WiFi station interface to pass the OTA data.
+
+        config EXAMPLE_FIRMWARE_UPGRADE_BIND_IF_ETH
+            bool "Bind Ethernet Interface"
+            depends on EXAMPLE_CONNECT_ETHERNET
+            help
+                Select Ethernet interface to pass the OTA data.
+    endchoice
+endmenu
+
+menu "SoftAP Configuration"
+    comment "SoftAP Configuration"
+
+    config ESP_WIFI_AP_SSID
+        string "WiFi AP SSID"
+        default "myssid"
+        help
+            SSID (network name) of the AP for the example to connect to.
+
+    config ESP_WIFI_AP_PASSWORD
+        string "WiFi AP Password"
+        default "mypassword"
+        help
+            WiFi password of the AP for the example to use.
+
+    config ESP_WIFI_AP_CHANNEL
+        int "WiFi AP Channel"
+        range 1 14
+        default 1
+        help
+            WiFi channel (network channel) of the AP for the example to use.
+
+    config ESP_MAX_STA_CONN_AP
+        int "Maximal STA Connections"
+        default 4
+        help
+            Max number of the STA connects to AP.
+endmenu
+
+menu "STA Configuration"
+    comment "STA Configuration"
+
+    config ESP_WIFI_REMOTE_AP_SSID
+        string "WiFi Remote AP SSID"
+        default "otherapssid"
+        help
+            SSID (network name) for the example's STA to connect to.
+
+    config ESP_WIFI_REMOTE_AP_PASSWORD
+        string "WiFi Remote AP Password"
+        default "otherappassword"
+        help
+            WiFi password for the example to use.
+
+    config ESP_MAXIMUM_STA_RETRY
+        int "Maximum Retry"
+        default 5
+        help
+            Set the maximum retry value to prevent the station from continuously attempting to reconnect to the Access Point (AP) when the AP doesn't exist.
+
+    choice ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD
+        prompt "WiFi Scan Auth Mode Threshold"
+        default ESP_WIFI_AUTH_WPA2_PSK
+        help
+            The weakest authmode to accept in the scan mode. This value defaults to ESP_WIFI_AUTH_WPA2_PSK in case the password is present and ESP_WIFI_AUTH_OPEN is used. Please select ESP_WIFI_AUTH_WEP / ESP_WIFI_AUTH_WPA_PSK in case AP is operating in WEP / WPA mode.
+
+        config ESP_WIFI_AUTH_OPEN
+            bool "OPEN"
+        config ESP_WIFI_AUTH_WEP
+            bool "WEP"
+        config ESP_WIFI_AUTH_WPA_PSK
+            bool "WPA PSK"
+        config ESP_WIFI_AUTH_WPA2_PSK
+            bool "WPA2 PSK"
+        config ESP_WIFI_AUTH_WPA_WPA2_PSK
+            bool "WPA/WPA2 PSK"
+        config ESP_WIFI_AUTH_WPA3_PSK
+            bool "WPA3 PSK"
+        config ESP_WIFI_AUTH_WPA2_WPA3_PSK
+            bool "WPA2/WPA3 PSK"
+        config ESP_WIFI_AUTH_WAPI_PSK
+            bool "WAPI PSK"
+    endchoice
+endmenu
+endmenu
+
+
