@@ -4,11 +4,12 @@
 #include "wifiStAp.h"
 #include "simple_ota_example.h"
 #include "server_component.h"
-#define led1 GPIO_NUM_2
-#define led2 GPIO_NUM_18
+#define yled GPIO_NUM_4
+#define rled GPIO_NUM_5
+#define gled GPIO_NUM_27
 // GPIO 4,5,16,17 are reserve for uart
-uint8_t led1_state = 0;
-uint8_t led2_state = 0;
+// uint8_t yled_state = 0;
+// uint8_t led2_state = 0;
 
 dataLoggerConfig read_config_struct;
 dataLoggerConfig write_config_struct;
@@ -20,10 +21,12 @@ EventGroupHandle_t s_wifi_event_group;
 
 void configure_led(void)
 {
-    gpio_reset_pin(led1);
-    gpio_reset_pin(led2);
-    gpio_set_direction(led1, GPIO_MODE_OUTPUT);
-    gpio_set_direction(led2, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(yled);
+    gpio_reset_pin(rled);
+    gpio_reset_pin(gled);
+    gpio_set_direction(yled, GPIO_MODE_OUTPUT);
+    gpio_set_direction(rled, GPIO_MODE_OUTPUT);
+    gpio_set_direction(gled, GPIO_MODE_OUTPUT);
 }
 
 void led_on_off(uint8_t led, uint8_t led_state)
@@ -35,8 +38,9 @@ void app_main(void)
 {
     char *TAG = "main";
     configure_led();
-    led_on_off(led1, 0);
-    led_on_off(led2, 0);
+    led_on_off(yled, 0);
+    led_on_off(rled, 0);
+    led_on_off(gled, 1);
     // non volatile init
     ESP_ERROR_CHECK(nvs_init());
 
@@ -121,13 +125,13 @@ void app_main(void)
     {
         ESP_LOGI("WiFi Sta", "connected to ap SSID:%s password:%s",
                  read_config_struct.ST_SSID, read_config_struct.ST_PASSWORD);
-        gpio_set_level(led2, 1);
+        gpio_set_level(yled, 0);
     }
     else if (bits & WIFI_FAIL_BIT)
     {
         ESP_LOGI("WiFi Sta", "Failed to connect to SSID:%s, password:%s",
                  read_config_struct.ST_SSID, read_config_struct.ST_PASSWORD);
-        gpio_set_level(led2, 0);
+        gpio_set_level(yled, 1);
     }
     else
     {

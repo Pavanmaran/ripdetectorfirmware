@@ -494,6 +494,7 @@ void post_rest_function(char *URL, char *json_string)
     esp_http_client_config_t config_post = {
         // .url = "http://192.168.29.24:8000/sensordata/",
         .url = "http://lims.data.highlandenergynig.com/api/collect-data-store",
+        // .url = URL,
         .method = HTTP_METHOD_POST,
         .cert_pem = NULL,
         .event_handler = client_event_post_handler};

@@ -108,6 +108,11 @@ void rx_task(void *arg)
             if (char_data != NULL)
             {
                 printf("Converted data: %s\n", char_data);
+                
+                // blink gled for 1 second
+                gpio_set_level(GPIO_NUM_27, 0);
+                vTaskDelay(pdMS_TO_TICKS(1000)); 
+                gpio_set_level(GPIO_NUM_27, 1);
 
                 if (uart_num == 2)
                 {
