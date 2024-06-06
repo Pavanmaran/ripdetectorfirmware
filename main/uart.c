@@ -43,7 +43,7 @@ char *uint8_t_to_char(uint8_t *data, size_t size)
 void uart_init(void)
 {
     const uart_config_t uart_config = {
-        .baud_rate = 115200,
+        .baud_rate = 9600,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -83,6 +83,18 @@ void tx_task(void *arg)
     }
 }
 
+void hex_to_hexStr(uint8_t *hexdata, size_t hexdataSize, char *hexstrData, int hexstrDataLen) {
+    if (hexstrDataLen < hexdataSize * 2 + 1) {
+        // Not enough space in hexstrData to store the hex string
+        return;
+    }
+
+    for (size_t i = 0; i < hexdataSize; ++i) {
+        sprintf(&hexstrData[i * 2], "%02X", hexdata[i]);
+    }
+
+    hexstrData[hexdataSize * 2] = '\0'; // Null-terminate the string
+}
 void rx_task(void *arg)
 {
     dataLoggerConfig read_config_struct;
@@ -104,10 +116,15 @@ void rx_task(void *arg)
             ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
 
             // convert uint8_t array to char array
-            char *char_data = uint8_t_to_char(data, RX_BUF_SIZE);
-            if (char_data != NULL)
+            // char *hex_str = uint8_t_to_char(data, RX_BUF_SIZE);
+            // Allocate space for the hex string
+            char hex_str[2 * RX_BUF_SIZE + 1];
+            hex_to_hexStr(data, rxBytes, hex_str, sizeof(hex_str));
+            printf("Hex string: %s\n", hex_str);
+
+            if (rxBytes > 0)
             {
-                printf("Converted data: %s\n", char_data);
+                printf("Converted data: %s\n", hex_str);
                 
                 // blink gled for 1 second
                 gpio_set_level(GPIO_NUM_27, 0);
@@ -127,12 +144,12 @@ void rx_task(void *arg)
                             esp_mac_address[0], esp_mac_address[1], esp_mac_address[2],
                             esp_mac_address[3], esp_mac_address[4], esp_mac_address[5]);
                     // create json
-                       char* data = createJSON("IOT DATA LOGGER", mac_str, char_data);
+                       char* data = createJSON("IOT DATA LOGGER", mac_str, hex_str);
 
                     post_rest_function(read_config_struct.URL, data);
                     free(data);
                 }
-                free(char_data); // Don't forget to free the memory
+                // free(hex_str); // Don't forget to free the memory
             }
             else
             {
