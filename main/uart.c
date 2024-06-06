@@ -96,6 +96,7 @@ void hex_to_hexStr(uint8_t *hexdata, size_t hexdataSize, char *hexstrData, int h
 
     hexstrData[hexdataSize * 2] = '\0'; // Null-terminate the string
 }
+
 void rx_task(void *arg)
 {
     dataLoggerConfig read_config_struct;
@@ -115,18 +116,20 @@ void rx_task(void *arg)
             data[rxBytes] = 0;
                         
             ESP_LOGI(RX_TASK_TAG, "Received on UART %d: Read %d bytes: '%s'", uart_num, rxBytes, data);
-                ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
-
+            ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
+#ifndef HEX2STR
             // convert uint8_t array to char array
-            // char *hex_str = uint8_t_to_char(data, RX_BUF_SIZE);
+            char *char_data = uint8_t_to_char(data, RX_BUF_SIZE);
+#endif
+#ifdef HEX2STR
             // Allocate space for the hex string
-            char hex_str[2 * RX_BUF_SIZE + 1];
-            hex_to_hexStr(data, rxBytes, hex_str, sizeof(hex_str));
-            printf("Hex string: %s\n", hex_str);
-
-            if (rxBytes > 0)
+            char char_data[2 * RX_BUF_SIZE + 1];
+            hex_to_hexStr(data, rxBytes, char_data, sizeof(char_data));
+            printf("Hex string: %s\n", char_data);
+#endif   
+            if (char_data != NULL)
             {
-                printf("Converted data: %s\n", hex_str);
+                printf("Converted data: %s\n", char_data);
                 
                 // blink gled for 1 second
                 gpio_set_level(GPIO_NUM_27, 0);
@@ -146,12 +149,14 @@ void rx_task(void *arg)
                             esp_mac_address[0], esp_mac_address[1], esp_mac_address[2],
                             esp_mac_address[3], esp_mac_address[4], esp_mac_address[5]);
                     // create json
-                       char* data = createJSON("IOT DATA LOGGER", mac_str, hex_str);
+                       char* data = createJSON("IOT DATA LOGGER", mac_str, char_data);
 
                     post_rest_function(read_config_struct.URL, data);
                     free(data);
                 }
-                // free(hex_str); // Don't forget to free the memory
+#ifndef HEX2STR
+                free(char_data); // Don't forget to free the memory
+#endif
             }
             else
             {
