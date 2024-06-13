@@ -108,12 +108,13 @@ void rx_task(void *arg)
     uart_port_t uart_num = *((uart_port_t *)arg);
     while (1)
     {
-        const int rxBytes = uart_read_bytes(uart_num, data, RX_BUF_SIZE, 1000 / portTICK_PERIOD_MS);
-        if (rxBytes > 0)
+        const int rxBytes = uart_read_bytes(uart_num, data, RX_BUF_SIZE, 5000 / portTICK_PERIOD_MS);
+        if (rxBytes > 0 )
         {
             data[rxBytes] = 0;
+                        
             ESP_LOGI(RX_TASK_TAG, "Received on UART %d: Read %d bytes: '%s'", uart_num, rxBytes, data);
-            ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
+                ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
 
             // convert uint8_t array to char array
             // char *hex_str = uint8_t_to_char(data, RX_BUF_SIZE);
