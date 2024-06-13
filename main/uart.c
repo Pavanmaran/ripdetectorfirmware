@@ -43,7 +43,8 @@ char *uint8_t_to_char(uint8_t *data, size_t size)
 void uart_init(void)
 {
     const uart_config_t uart_config = {
-        .baud_rate = 9600,
+        // .baud_rate = 9600,
+        .baud_rate = 2400,  // for meteler only
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
