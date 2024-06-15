@@ -14,7 +14,7 @@
 // Variable to hold the MAC address
 uint8_t esp_mac_address[6]; // MAC address is 6 bytes long
 
-
+#define HEX2STR
 static const char *TAG = "UART";
 
 char *uint8_t_to_char(uint8_t *data, size_t size)
@@ -127,10 +127,10 @@ void rx_task(void *arg)
             hex_to_hexStr(data, rxBytes, char_data, sizeof(char_data));
             printf("Hex string: %s\n", char_data);
 #endif   
-            if (char_data != NULL)
+            if (rxBytes>0)
             {
                 printf("Converted data: %s\n", char_data);
-                
+
                 // blink gled for 1 second
                 gpio_set_level(GPIO_NUM_27, 0);
                 vTaskDelay(pdMS_TO_TICKS(1000)); 

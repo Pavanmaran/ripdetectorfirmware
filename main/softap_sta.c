@@ -38,7 +38,7 @@ void app_main(void)
 {
     char *TAG = "main";
     configure_led();
-    // led_on_off(yled, 0);
+    led_on_off(yled, 1);
     led_on_off(rled, 0);
     led_on_off(gled, 1);
     // non volatile init
