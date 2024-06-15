@@ -105,7 +105,8 @@ void app_main(void)
 
     printf("wifi init done \n");
     bool is_connected = false;
-    
+    initi_web_page_buffer();
+    setup_server();
     /* Start WiFi */
     ESP_ERROR_CHECK(esp_wifi_start());
     /*
@@ -118,7 +119,7 @@ void app_main(void)
                                            pdFALSE,
                                            pdFALSE,
                                            portMAX_DELAY);
-
+    
     /* xEventGroupWaitBits() returns the bits before the call returned,
      * hence we can test which event actually happened. */
     if (bits & WIFI_CONNECTED_BIT)
