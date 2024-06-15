@@ -104,6 +104,7 @@ void app_main(void)
     esp_netif_t *esp_netif_sta = wifi_init_sta(&read_config_struct);
 
     printf("wifi init done \n");
+    bool is_connected = false;
 
     /* Start WiFi */
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -125,12 +126,14 @@ void app_main(void)
         ESP_LOGI("WiFi Sta", "connected to ap SSID:%s password:%s",
                  read_config_struct.ST_SSID, read_config_struct.ST_PASSWORD);
         gpio_set_level(yled, 0);
+        is_connected = true;
     }
     else if (bits & WIFI_FAIL_BIT)
     {
         ESP_LOGI("WiFi Sta", "Failed to connect to SSID:%s, password:%s",
                  read_config_struct.ST_SSID, read_config_struct.ST_PASSWORD);
         gpio_set_level(yled, 1);
+        is_connected = false;
     }
     else
     {
@@ -150,23 +153,23 @@ void app_main(void)
     printf("--------------------------------now post data---------------------------");
 
     // ota
-    printf("return to main \n");
-        // check wifi connect status if not then try again 
-        if (esp_netif_sta == NULL)
+    printf("returnig to main \n");
+    // check wifi connect status if not then try again
+    if (!is_connected)
+    {
+        s_retry_num++;
+        printf("retry num %d \n", s_retry_num);
+        if (s_retry_num < 20)
         {
-            s_retry_num++;
-            printf("retry num %d \n", s_retry_num);
-            if (s_retry_num < 20)
-            {
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                esp_netif_t *esp_netif_sta = wifi_init_sta(&read_config_struct);
-            }
-            else
-            {
-                printf("wifi init failed \n");
-                return;
-            }
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            esp_netif_t *esp_netif_sta = wifi_init_sta(&read_config_struct);
         }
+        else
+        {
+            printf("wifi init failed \n");
+            return;
+        }
+    }
 
     initi_web_page_buffer();
     setup_server();
