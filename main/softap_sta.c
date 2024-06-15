@@ -8,7 +8,7 @@
 #define rled GPIO_NUM_5
 #define gled GPIO_NUM_27
 // GPIO 4,5,16,17 are reserve for uart
-// uint8_t yled_state = 0;
+uint8_t yled_state = 1;
 // uint8_t led2_state = 0;
 
 dataLoggerConfig read_config_struct;
@@ -38,7 +38,7 @@ void app_main(void)
 {
     char *TAG = "main";
     configure_led();
-    led_on_off(yled, 0);
+    // led_on_off(yled, 0);
     led_on_off(rled, 0);
     led_on_off(gled, 1);
     // non volatile init
@@ -103,11 +103,10 @@ void app_main(void)
     ESP_LOGI("WiFi Sta", "ESP_WIFI_MODE_STA");
     esp_netif_t *esp_netif_sta = wifi_init_sta(&read_config_struct);
 
+    printf("wifi init done \n");
+
     /* Start WiFi */
     ESP_ERROR_CHECK(esp_wifi_start());
-    printf("return to main \n");
-    initi_web_page_buffer();
-    setup_server();
     /*
      * Wait until either the connection is established (WIFI_CONNECTED_BIT) or
      * connection failed for the maximum number of re-tries (WIFI_FAIL_BIT).
@@ -151,7 +150,26 @@ void app_main(void)
     printf("--------------------------------now post data---------------------------");
 
     // ota
+    printf("return to main \n");
+        // check wifi connect status if not then try again 
+        if (esp_netif_sta == NULL)
+        {
+            s_retry_num++;
+            printf("retry num %d \n", s_retry_num);
+            if (s_retry_num < 20)
+            {
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                esp_netif_t *esp_netif_sta = wifi_init_sta(&read_config_struct);
+            }
+            else
+            {
+                printf("wifi init failed \n");
+                return;
+            }
+        }
 
+    initi_web_page_buffer();
+    setup_server();
     ESP_LOGI(TAG, "OTA example app_main start");
     // Initialize NVS.
     esp_err_t err = nvs_flash_init();
