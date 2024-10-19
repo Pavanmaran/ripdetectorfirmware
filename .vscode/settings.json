@@ -3,7 +3,9 @@
   "files.associations": {
     "esp_crt_bundle.h": "c",
     "server_component.h": "c",
-    "freertos.h": "c"
+    "freertos.h": "c",
+    "esp_efuse.h": "c",
+    "esp_mac.h": "c"
   },
   "idf.flashType": "UART",
   "idf.port": "/dev/cu.usbserial-0001",

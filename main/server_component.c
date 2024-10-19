@@ -30,6 +30,34 @@
 #define JS_FILE_PATH "/storage/jquery-3.3.1.min.js"
 #define SVG_FILE_PATH "/storage/undraw-contact.svg"
 #define CSS_STYLE_FILE_PATH "/storage/style.css"
+#include "esp_spi_flash.h"
+#include "esp_efuse.h" // Include the header for esp_efuse_mac_get_default
+#include <stdio.h>     // For snprintf function
+#include <stdint.h>    // For uint8_t type
+#include "esp_mac.h"
+
+// Function prototype
+char *get_mac_address(void);
+uint8_t mac_address[6]; // MAC address is 6 bytes long
+
+// Get MAC address as string
+char *get_mac_address(void) {
+    esp_efuse_mac_get_default(mac_address);
+    static char mac_address_str[18];
+    snprintf(mac_address_str, sizeof(mac_address_str), "%02x:%02x:%02x:%02x:%02x:%02x", 
+             mac_address[0], mac_address[1], mac_address[2], 
+             mac_address[3], mac_address[4], mac_address[5]);
+    printf("MAC address: %s\n", mac_address_str);
+    return mac_address_str;
+}
+
+// HTTP handler to return MAC address in JSON format
+esp_err_t get_mac_address_handler(httpd_req_t *req) {
+    char *mac_str = get_mac_address();
+    char json_response[50];
+    snprintf(json_response, sizeof(json_response), "{\"MAC Address\": \"%s\"}", mac_str);
+    return send_json_response(req, json_response);
+}
 
 // Function to convert a long to a string
 char *LongToString(long value)
@@ -64,7 +92,7 @@ char *createJSON(char *device_type, char *Device_ID, char *Data)
 
     // Create JSON string
     // int written = snprintf(json, len, "{\"device_type\":\"%s\",\"Device_ID\":\"%s\",\"Data\":\"%s\"}", device_type, Device_ID, Data);
-    int written=snprintf(json,len,"{\"device_type\": \"%s\",\"device_name\":\"%s\",\"date_time\": \"2024-04-20 12:10:10\", \"params\":\"%s\"}",device_type,Device_ID,Data);
+    int written = snprintf(json, len, "{\"device_type\": \"%s\",\"device_name\":\"%s\",\"date_time\": \"2024-04-20 12:10:10\", \"params\":\"%s\"}", device_type, Device_ID, Data);
     // Check if snprintf failed
     if (written < 0 || written >= len)
     {
@@ -251,6 +279,14 @@ httpd_uri_t css_style_uri = {
     .handler = css_style_handler,
     .user_ctx = NULL};
 
+// Register the MAC address handler in the server setup
+httpd_uri_t uri_get_mac_address = {
+    .uri = "/getmac",
+    .method = HTTP_GET,
+    .handler = get_mac_address_handler,
+    .user_ctx = NULL};
+
+
 httpd_handle_t setup_server(void)
 {
     ESP_LOGI("setup_server", "inside setup server");
@@ -270,6 +306,7 @@ httpd_handle_t setup_server(void)
         httpd_register_uri_handler(server, &uri_pushConfig_optin);
         httpd_register_uri_handler(server, &uri_pushConfig);
         httpd_register_uri_handler(server, &uri_get_resetABS);
+        httpd_register_uri_handler(server, &uri_get_mac_address); // MAC address handler
     }
 
     return server;
@@ -376,6 +413,11 @@ esp_err_t pushconfig_hndl_option(httpd_req_t *req)
     return send_json_response(req, "");
     ;
 }
+
+// Function to get the MAC address
+// Function implementation
+
+// Example function that uses get_mac_address
 
 esp_err_t pushconfig_hndl(httpd_req_t *req)
 {
@@ -500,7 +542,7 @@ void post_rest_function(char *URL, char *json_string)
         .event_handler = client_event_post_handler};
 
     esp_http_client_handle_t client = esp_http_client_init(&config_post);
-    printf("%s",json_string);
+    printf("%s", json_string);
 
     // char *post_data = "{\"device_type\": \"DATA LOGGER\",\"device_name\":\"eleven\",\"date_time\": \"2024-04-23 12:10:10\", \"params\":\"Send Output value\"}";
     esp_http_client_set_post_field(client, json_string, strlen(json_string));
