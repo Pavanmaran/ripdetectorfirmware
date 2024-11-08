@@ -1,151 +1,156 @@
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/event_groups.h"
+
 #include "wifiStAp.h"
+#include "driver/gpio.h"
+#include "esp_system.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
 
+#include "lwip/err.h"
+#include "lwip/sys.h"
 
+#define EXAMPLE_ESP_MAXIMUM_RETRY 6
 
-#if CONFIG_ESP_WIFI_AUTH_OPEN
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD   WIFI_AUTH_OPEN
-#elif CONFIG_ESP_WIFI_AUTH_WEP
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD   WIFI_AUTH_WEP
-#elif CONFIG_ESP_WIFI_AUTH_WPA_PSK
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD   WIFI_AUTH_WPA_PSK
-#elif CONFIG_ESP_WIFI_AUTH_WPA2_PSK
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD   WIFI_AUTH_WPA2_PSK
-#elif CONFIG_ESP_WIFI_AUTH_WPA_WPA2_PSK
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD   WIFI_AUTH_WPA_WPA2_PSK
-#elif CONFIG_ESP_WIFI_AUTH_WPA3_PSK
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD   WIFI_AUTH_WPA3_PSK
-#elif CONFIG_ESP_WIFI_AUTH_WPA2_WPA3_PSK
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD   WIFI_AUTH_WPA2_WPA3_PSK
-#elif CONFIG_ESP_WIFI_AUTH_WAPI_PSK
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD   WIFI_AUTH_WAPI_PSK
-#endif
+// Wi-Fi Event Bits
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT BIT1
 
+EventGroupHandle_t s_wifi_event_group;
+int s_retry_num = 0;
 
-// char *"WiFi SoftAP" = "WiFi SoftAP";
-// char *"WiFi Sta" = "WiFi Sta";
+// Define tag
+static const char *TAG = "WiFiStAp";
 
-
-
-
-
-
-
-
-
-
-
-void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
+// Event handler for Wi-Fi events
+static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
-        wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *) event_data;
-        ESP_LOGI("WiFi SoftAP", "Station "MACSTR" joined, AID=%d",
-                 MAC2STR(event->mac), event->aid);
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
-        wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
-        ESP_LOGI("WiFi SoftAP", "Station "MACSTR" left, AID=%d",
-                 MAC2STR(event->mac), event->aid);
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-        ESP_LOGI("WiFi Sta", "Station started");
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-        ESP_LOGI("WiFi Sta", "Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
+    if (event_base == WIFI_EVENT)
+    {
+        if (event_id == WIFI_EVENT_STA_START)
+        {
+            esp_wifi_connect();
+        }
+        else if (event_id == WIFI_EVENT_STA_DISCONNECTED)
+        {
+            if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY)
+            {
+                esp_wifi_connect();
+                s_retry_num++;
+                ESP_LOGI(TAG, "Retrying to connect to the AP, attempt %d", s_retry_num);
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Failed to connect to SSID after %d attempts. Switching to AP mode.", 
+                EXAMPLE_ESP_MAXIMUM_RETRY);
+                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            }
+        }
+    }
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
+    {
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+        ESP_LOGI(TAG, "Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
+        s_retry_num = 0; // Reset retry counter
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
 
-/* Initialize soft AP */
-esp_netif_t *wifi_init_softap(void)
+// Initialize SoftAP mode as fallback
+void wifi_init_softap(void)
 {
     esp_netif_t *esp_netif_ap = esp_netif_create_default_wifi_ap();
 
     wifi_config_t wifi_ap_config = {
         .ap = {
-            .ssid = EXAMPLE_ESP_WIFI_AP_SSID,
-            .ssid_len = strlen(EXAMPLE_ESP_WIFI_AP_SSID),
-            .channel = EXAMPLE_ESP_WIFI_CHANNEL,
-            .password = EXAMPLE_ESP_WIFI_AP_PASSWD,
-            .max_connection = EXAMPLE_MAX_STA_CONN,
+            .ssid = "IOT_Gateway",
+            .ssid_len = strlen("IOT_Gateway"),
+            .channel = 1,
+            .password = "12345678",
+            .max_connection = 4,
             .authmode = WIFI_AUTH_WPA2_PSK,
-            .pmf_cfg = {
-                .required = false,
-            },
         },
     };
 
-    if (strlen(EXAMPLE_ESP_WIFI_AP_PASSWD) == 0) {
+    if (strlen((char *)wifi_ap_config.ap.password) == 0)
+    {
         wifi_ap_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_ap_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI("WiFi SoftAP", "wifi_init_softap finished. SSID:%s password:%s channel:%d",
-             EXAMPLE_ESP_WIFI_AP_SSID, EXAMPLE_ESP_WIFI_AP_PASSWD, EXAMPLE_ESP_WIFI_CHANNEL);
-
-    return esp_netif_ap;
+    ESP_LOGI("WiFi SoftAP", "SoftAP initialized. SSID:%s, Password:%s", "IOT_Gateway", "12345678");
 }
 
+void initialize_wifi(dataLoggerConfig *config)
+{
+    ESP_LOGI(TAG, "SSID: %s", config->ST_SSID);
+    ESP_LOGI(TAG, "Password: %s", config->ST_PASSWORD);
 
+    s_wifi_event_group = xEventGroupCreate();
 
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-esp_netif_t *wifi_init_sta(dataLoggerConfig *NvsConfig) {
-    esp_netif_t *esp_netif_sta = esp_netif_create_default_wifi_sta();
-    int MAX_SSID_LENGTH=20;
-    int MAX_PASSWORD_LENGTH=20;
-    // Convert SSID and password strings to uint8_t arrays
-    uint8_t ssid[MAX_SSID_LENGTH]; // Assuming MAX_SSID_LENGTH is the maximum length of SSID
-    uint8_t password[MAX_PASSWORD_LENGTH]; // Assuming MAX_PASSWORD_LENGTH is the maximum length of password
-    strncpy((char*)ssid, NvsConfig->ST_SSID, MAX_SSID_LENGTH - 1);
-    strncpy((char*)password, NvsConfig->ST_PASSWORD, MAX_PASSWORD_LENGTH - 1);
-    ssid[MAX_SSID_LENGTH - 1] = '\0'; // Ensure null-termination
-    password[MAX_PASSWORD_LENGTH - 1] = '\0'; // Ensure null-termination
+    // Register event handlers
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                        ESP_EVENT_ANY_ID,
+                                                        &event_handler,
+                                                        NULL,
+                                                        &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                        IP_EVENT_STA_GOT_IP,
+                                                        &event_handler,
+                                                        NULL,
+                                                        &instance_got_ip));
 
-    // Configure the Wi-Fi settings
-    wifi_config_t wifi_sta_config = {
+    // Configure Wi-Fi station
+    wifi_config_t wifi_config = {
         .sta = {
-            .ssid = "",
-            .password = "",
-            .scan_method = WIFI_ALL_CHANNEL_SCAN,
-            .failure_retry_cnt = 10,
-            .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
-            .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
+            .ssid = {0},  // Initialize the array to avoid garbage values
+            .password = {0},  // Initialize the array to avoid garbage values
+            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
         },
     };
+    
+    strncpy((char *)wifi_config.sta.ssid, config->ST_SSID, sizeof(wifi_config.sta.ssid) - 1);
+    strncpy((char *)wifi_config.sta.password, config->ST_PASSWORD, sizeof(wifi_config.sta.password) - 1);
 
-    strncpy((char*)wifi_sta_config.sta.ssid, (char*)ssid, sizeof(wifi_sta_config.sta.ssid) - 1);
-    strncpy((char*)wifi_sta_config.sta.password, (char*)password, sizeof(wifi_sta_config.sta.password) - 1);
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Set the Wi-Fi configuration
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config));
+    ESP_LOGI(TAG, "WiFi initialized, trying to connect to SSID:%s", config->ST_SSID);
 
-    ESP_LOGI("WiFi Sta", "wifi_init_sta finished.");
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+                                           pdFALSE,
+                                           pdFALSE,
+                                           portMAX_DELAY);
 
-    return esp_netif_sta;
-}
-
-uint8_t* char_to_uint8(const char *str) {
-    size_t len = strlen(str);
-    uint8_t *result = (uint8_t*)malloc(len + 1); // +1 for null terminator
-    if (result == NULL) {
-        // Error handling: unable to allocate memory
-        return NULL;
+    if (bits & WIFI_CONNECTED_BIT)
+    {
+        ESP_LOGI(TAG, "Connected to SSID:%s", config->ST_SSID);
     }
-    strncpy((char*)result, str, len);
-    result[len] = '\0'; // Ensure null-termination
-    return result;
+    else if (bits & WIFI_FAIL_BIT)
+    {
+        ESP_LOGI(TAG, "Failed to connect to SSID:%s. Switching to SoftAP mode.", config->ST_SSID);
+        wifi_init_softap(); // Fallback to SoftAP mode
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Unexpected event");
+    }
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip));
+    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id));
+    vEventGroupDelete(s_wifi_event_group);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

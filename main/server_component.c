@@ -23,7 +23,6 @@
 #include "esp_spi_flash.h"
 #include "esp_spiffs.h"
 #include <esp_http_client.h>
-
 #include "non_volatile_storage.h"
 
 #define ATS_HTML_PATH "/storage/index.html"
@@ -36,6 +35,7 @@
 #include <stdint.h>    // For uint8_t type
 #include "esp_mac.h"
 
+dataLoggerConfig write_config_struct;
 // Function prototype
 char *get_mac_address(void);
 uint8_t mac_address[6]; // MAC address is 6 bytes long

@@ -5,7 +5,8 @@
     "server_component.h": "c",
     "freertos.h": "c",
     "esp_efuse.h": "c",
-    "esp_mac.h": "c"
+    "esp_mac.h": "c",
+    "non_volatile_storage.h": "c"
   },
   "idf.flashType": "UART",
   "idf.port": "/dev/cu.usbserial-0001",

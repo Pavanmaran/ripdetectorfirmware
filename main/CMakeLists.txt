@@ -4,7 +4,7 @@ idf_build_get_property(project_dir PROJECT_DIR)
 
 
 
-idf_component_register(SRCS "softap_sta.c" "simple_ota_example.c" "server_component.c" "non_volatile_storage.c" "uart.c" "wifiStAp.c"
+idf_component_register(SRCS "wifi.c" "main.c" "simple_ota_example.c" "server_component.c" "non_volatile_storage.c" "uart.c" "wifiStAp.c"
                     INCLUDE_DIRS "."
                     EMBED_TXTFILES ${project_dir}/server_certs/ca_cert.pem)
 set_source_files_properties(${SOURCES} PROPERTIES COMPILE_FLAGS "-Wall -Wextra -Werror")

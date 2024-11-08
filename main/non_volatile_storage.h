@@ -128,7 +128,6 @@ typedef struct
 }dataLoggerConfig;
 
 extern dataLoggerConfig read_config_struct;
-extern dataLoggerConfig write_config_struct;
 bool read_config_from_NVS(dataLoggerConfig *config);
 bool write_config_in_NVS(dataLoggerConfig *config);
 

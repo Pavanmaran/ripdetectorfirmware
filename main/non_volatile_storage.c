@@ -22,25 +22,25 @@ static const char *TAG = "non_volatile_storage";
 bool read_config_from_NVS(dataLoggerConfig *config) {
     char * TAG ="Read config from NVS";
     if (nvs_read_string("namespace_1", "SSID", &config->ST_SSID) == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully read string from NVS: %s", config->ST_SSID);
+        ESP_LOGI(TAG, "Successfully read WIFI SSID from NVS: %s", config->ST_SSID);
     } else {
         ESP_LOGE(TAG, "Failed to read string from NVS");
         return false;    
     }
     if (nvs_read_string("namespace_1", "PASSWORD", &config->ST_PASSWORD) == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully read string from NVS: %s", config->ST_PASSWORD);
+        ESP_LOGI(TAG, "Successfully read WIFI PASSWORD from NVS: %s", config->ST_PASSWORD);
     } else {
         ESP_LOGE(TAG, "Failed to read string from NVS");
         return false;    
     }
     if (nvs_read_string("namespace_1", "DELAY", &config->delay) == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully read string from NVS: %s", config->delay);
+        ESP_LOGI(TAG, "Successfully read DELAY from NVS: %s", config->delay);
     } else {
         ESP_LOGE(TAG, "Failed to read string from NVS");
         return false;
     }
     if (nvs_read_string("namespace_1", "URL", &config->URL) == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully read string from NVS: %s", config->URL);
+        ESP_LOGI(TAG, "Successfully read URL from NVS: %s", config->URL);
     } else {
         ESP_LOGE(TAG, "Failed to read string from NVS");
         return false;
@@ -51,26 +51,26 @@ bool read_config_from_NVS(dataLoggerConfig *config) {
 bool write_config_in_NVS(dataLoggerConfig *config) {
     char * TAG ="Write config in NVS";
     if (nvs_write_string("namespace_1", "SSID", config->ST_SSID) == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully write string to NVS");
+        ESP_LOGI(TAG, "Wifi SSID successfully write to NVS");
     } else {
         ESP_LOGE(TAG, "Failed to write string to NVS");
         return false;
     }
     if (nvs_write_string("namespace_1", "PASSWORD", config->ST_PASSWORD) == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully write string to NVS");
+        ESP_LOGI(TAG, "Wifi PASSWORD successfully write to NVS");
     } else {
         ESP_LOGE(TAG, "Failed to write string to NVS");
         return false;
     }
     if (nvs_write_string("namespace_1", "DELAY", config->delay) == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully write string to NVS");
+        ESP_LOGI(TAG, "Delay successfully write to NVS");
 
     } else {
         ESP_LOGE(TAG, "Failed to write string to NVS");
         return false;
     }
     if (nvs_write_string("namespace_1", "URL", config->URL) == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully write URL URL URL URL URLstring to NVS ");
+        ESP_LOGI(TAG, "Url successfully write to NVS");
     } else {
         ESP_LOGE(TAG, "Failed to write URL URL URL URLstring to NVS");
         return false;
@@ -215,7 +215,8 @@ static esp_err_t esp32_nvs_write(const char *namespace, const char *key, nvs_typ
                     #if CONFIG_LOG_MAXIMUM_LEVEL >= CONFIG_LOG_DEFAULT_LEVEL_INFO
                         char *string_value = value_to_string(type_value, value);
                         if (string_value != NULL) {
-                            ESP_LOGI(TAG, "Successfully write value to NVS %s.%s: %s", namespace, key, string_value);
+                            ESP_LOGI(TAG, "Successfully write value to NVS %s.%s: %s", 
+                            namespace, key, string_value);
                             free(string_value);
                         }
                     #endif  // CONFIG_LOG_MAXIMUM_LEVEL
