@@ -84,13 +84,16 @@ void tx_task(void *arg)
     }
 }
 
-void hex_to_hexStr(uint8_t *hexdata, size_t hexdataSize, char *hexstrData, int hexstrDataLen) {
-    if (hexstrDataLen < hexdataSize * 2 + 1) {
+void hex_to_hexStr(uint8_t *hexdata, size_t hexdataSize, char *hexstrData, int hexstrDataLen)
+{
+    if (hexstrDataLen < hexdataSize * 2 + 1)
+    {
         // Not enough space in hexstrData to store the hex string
         return;
     }
 
-    for (size_t i = 0; i < hexdataSize; ++i) {
+    for (size_t i = 0; i < hexdataSize; ++i)
+    {
         sprintf(&hexstrData[i * 2], "%02X", hexdata[i]);
     }
 
@@ -107,14 +110,19 @@ void rx_task(void *arg)
     static const char *RX_TASK_TAG = "RX_TASK";
     esp_log_level_set(RX_TASK_TAG, ESP_LOG_INFO);
     uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
+    if (data == NULL)
+    {
+        ESP_LOGE(RX_TASK_TAG, "Memory allocation failed for rx buffer");
+        return; // Handle memory allocation failure
+    }
     uart_port_t uart_num = *((uart_port_t *)arg);
     while (1)
     {
         const int rxBytes = uart_read_bytes(uart_num, data, RX_BUF_SIZE, 5000 / portTICK_PERIOD_MS);
-        if (rxBytes > 0 )
+        if (rxBytes > 0)
         {
             data[rxBytes] = 0;
-                        
+
             ESP_LOGI(RX_TASK_TAG, "Received on UART %d: Read %d bytes: '%s'", uart_num, rxBytes, data);
             ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
 #ifndef HEX2STR
@@ -126,14 +134,14 @@ void rx_task(void *arg)
             char char_data[2 * RX_BUF_SIZE + 1];
             hex_to_hexStr(data, rxBytes, char_data, sizeof(char_data));
             printf("Hex string: %s\n", char_data);
-#endif   
-            if (rxBytes>0)
+#endif
+            if (rxBytes > 0)
             {
                 printf("Converted data: %s\n", char_data);
 
                 // blink gled for 1 second
                 gpio_set_level(GPIO_NUM_27, 0);
-                vTaskDelay(pdMS_TO_TICKS(1000)); 
+                vTaskDelay(pdMS_TO_TICKS(1000));
                 gpio_set_level(GPIO_NUM_27, 1);
 
                 if (uart_num == 2)
@@ -149,7 +157,7 @@ void rx_task(void *arg)
                             esp_mac_address[0], esp_mac_address[1], esp_mac_address[2],
                             esp_mac_address[3], esp_mac_address[4], esp_mac_address[5]);
                     // create json
-                       char* data = createJSON("IOT DATA LOGGER", mac_str, char_data);
+                    char *data = createJSON("IOT DATA LOGGER", mac_str, char_data);
 
                     post_rest_function(read_config_struct.URL, data);
                     free(data);
@@ -166,14 +174,3 @@ void rx_task(void *arg)
     }
     free(data);
 }
-
-// void app_main(void)
-// {
-//     uart_init();
-//     uart_port_t uart1 = UART_NUM_1;
-//     uart_port_t uart2 = UART_NUM_2;
-//     xTaskCreate(rx_task, "uart_rx_task_1", 1024 * 8, &uart1, configMAX_PRIORITIES - 1, NULL);
-//     xTaskCreate(tx_task, "uart_tx_task_1", 1024 * 2, &uart1, configMAX_PRIORITIES - 2, NULL);
-//     xTaskCreate(rx_task, "uart_rx_task_2", 1024 * 8, &uart2, configMAX_PRIORITIES - 1, NULL);
-//     xTaskCreate(tx_task, "uart_tx_task_2", 1024 * 2, &uart2, configMAX_PRIORITIES - 2, NULL);
-// }

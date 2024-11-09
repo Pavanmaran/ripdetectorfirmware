@@ -88,6 +88,7 @@ void app_main(void)
     // Configure LEDs
     configure_led();
     led_on_off(yled, 1); // Indicate system startup
+    gpio_set_level(GPIO_NUM_27, 1); // turn of green led
 
     // Initialize NVS
     esp_err_t ret = nvs_init();
@@ -101,17 +102,17 @@ void app_main(void)
 
     // Define your configuration structure
     dataLoggerConfig config;
-    config.ST_SSID = "Me";
-    config.ST_PASSWORD = "76919716";
-    config.delay = "10";  // Example delay value
-    config.URL = "http://lims.data.highlandenergynig.com/api/collect-data-store";
+    // config.ST_SSID = "Me";
+    // config.ST_PASSWORD = "76919716";
+    // config.delay = "10";  // Example delay value
+    // config.URL = "http://lims.data.highlandenergynig.com/api/collect-data-store";
 
-    // Write configuration to NVS
-    if (write_config_in_NVS(&config)) {
-        ESP_LOGI(TAG, "Configuration saved successfully!");
-    } else {
-        ESP_LOGE(TAG, "Failed to save configuration.");
-    }
+    // // Write configuration to NVS
+    // if (write_config_in_NVS(&config)) {
+    //     ESP_LOGI(TAG, "Configuration saved successfully!");
+    // } else {
+    //     ESP_LOGE(TAG, "Failed to save configuration.");
+    // }
 
     // Attempt to read the configuration from NVS
     if (read_config_from_NVS(&config)) {
@@ -126,20 +127,23 @@ void app_main(void)
     ESP_LOGI(TAG, "UART initialized");
 
     // Initialize network interfaces and Wi-Fi
-    if (esp_netif_init() != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to initialize network interface");
-        return; // Handle error appropriately
-    }
-    ESP_LOGI(TAG, "Network interfaces initialized");
-    if (esp_event_loop_create_default() != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to create event loop");
-        return; // Handle error appropriately
-    }
+    // if (esp_netif_init() != ESP_OK)
+    // {
+    //     ESP_LOGE(TAG, "Failed to initialize network interface");
+    //     return; // Handle error appropriately
+    // }
+    // ESP_LOGI(TAG, "Network interfaces initialized");
+    // if (esp_event_loop_create_default() != ESP_OK)
+    // {
+    //     ESP_LOGE(TAG, "Failed to create event loop");
+    //     return; // Handle error appropriately
+    // }
     // dataLoggerConfig config;
-
+    ESP_LOGI(TAG, "Initializing wifi");
     initialize_wifi(&config);
+    ESP_LOGI(TAG, "Wifi initialized");
+    
+    ESP_LOGI(TAG, "Initialization complete");
 
     // Initialize OTA
     // initialize_ota();
@@ -149,5 +153,4 @@ void app_main(void)
     setup_server();
 
     // Post initialization logic
-    ESP_LOGI(TAG, "Initialization complete");
 }
