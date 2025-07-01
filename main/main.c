@@ -1,156 +1,260 @@
-#include "uart.h"
-#include "non_volatile_storage.h"
+#include "driver/uart.h"
 #include "driver/gpio.h"
-#include "wifiStAp.h"
-#include "simple_ota_example.h"
-#include "server_component.h"
-#include "wifi.h"
-#define yled GPIO_NUM_4
-#define rled GPIO_NUM_5
-#define gled GPIO_NUM_27
+#include "driver/adc.h"
+#include "esp_adc_cal.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include <string.h>
+#include "nvs_flash.h"
+#include "nvs.h"
 
-// LED states
-uint8_t yled_state = 1;
+#define ADC_PIN ADC2_CHANNEL_0     // GPIO4 for WPT receiver
+#define RELAY_PIN GPIO_NUM_5       // Relay (belt rip indication)
+#define gled GPIO_NUM_27           // Green LED (power indication)
+#define VOLTAGE_THRESHOLD 1500     // Threshold in  (adjust based on WPT module)
+#define CHECK_INTERVAL_MS 1000     // Check every 1 second for finer timing
+#define STARTUP_DELAY_MS 20000     // 20 seconds startup delay
+#define RIP_THRESHOLD_FACTOR 1.5   // 1.5x previous interval for rip detection
+#define DEFAULT_INTERVAL_MS 10000  // Default interval before first drops
+#define ADC_ATTEN ADC_ATTEN_DB_11  // 0-3.9V range
+#define ADC_WIDTH ADC_WIDTH_BIT_12 // 12-bit resolution
+#define RELAY_ACTIVE_LOW 0         // 1 for active-low relay
+#define GLED_ACTIVE_LOW 1          // 1 for active-low green LED
+#define UART1_NUM UART_NUM_1       // UART1 for logging
+#define UART2_NUM UART_NUM_2       // UART2 for status/commands
+#define TXD_PIN_2 GPIO_NUM_18      // UART2 TX
+#define RXD_PIN_2 GPIO_NUM_19      // UART2 RX
+#define RX_BUF_SIZE 128            // UART RX buffer size
+#define UART2_RX_TIMEOUT_MS 5000   // 5-second timeout for RX command
 
-dataLoggerConfig read_config_struct;
+static const char *TAG = "main";
+static esp_adc_cal_characteristics_t adc_chars;
+
+// Belt status
+uint8_t belt_ripped = 0;
+static TickType_t last_drop_time = 0;
+static TickType_t prev_interval = DEFAULT_INTERVAL_MS / portTICK_PERIOD_MS;
+static bool first_drop_detected = false;
 
 // Function to configure GPIO pins for LEDs
 void configure_led(void)
 {
-    gpio_reset_pin(yled);
-    gpio_reset_pin(rled);
-    gpio_reset_pin(gled);
-    gpio_set_direction(yled, GPIO_MODE_OUTPUT);
-    gpio_set_direction(rled, GPIO_MODE_OUTPUT);
-    gpio_set_direction(gled, GPIO_MODE_OUTPUT);
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << RELAY_PIN) | (1ULL << gled),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE, // Enable pull-down for cleaner low state
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+    gpio_set_level(gled, GLED_ACTIVE_LOW ? 0 : 1); // Green LED on (active-low)
+    gpio_set_level(RELAY_PIN, 0); // Relay off
+    ESP_LOGI(TAG, "LEDs and relay configured");
 }
 
-// Function to control LED state
-void led_on_off(uint8_t led, uint8_t led_state)
+// Function to control LED or relay state
+
+// Function to initialize ADC
+void initialize_adc(void)
 {
-    gpio_set_level(led, led_state);
+    adc2_config_channel_atten(ADC_PIN, ADC_ATTEN);
+    esp_adc_cal_characterize(ADC_UNIT_2, ADC_ATTEN, ADC_WIDTH, 1100, &adc_chars);
+}
+
+// Function to read voltage from ADC pin
+uint32_t read_voltage(void)
+{
+    int adc_reading = 0;
+    for (int i = 0; i < 16; i++)
+    {
+        int raw;
+        adc2_get_raw(ADC_PIN, ADC_WIDTH, &raw);
+        adc_reading += raw;
+    }
+    adc_reading /= 16; // Average over 16 samples
+    return esp_adc_cal_raw_to_voltage(adc_reading, &adc_chars);
+}
+
+// Function to send data over UART2
+void sendDatatoPC(const char *data)
+{
+    const int len = strlen(data);
+    const int txBytes = uart_write_bytes(UART2_NUM, data, len);
+    ESP_LOGI(TAG, "Sent from UART %d: Wrote %d bytes: %s", UART2_NUM, txBytes, data);
+}
+
+// Function to wait for UART2 command
+bool wait_for_uart2_command(void)
+{
+    char rx_buffer[RX_BUF_SIZE];
+    int len = uart_read_bytes(UART2_NUM, (uint8_t*)rx_buffer, RX_BUF_SIZE - 1, UART2_RX_TIMEOUT_MS / portTICK_PERIOD_MS);
+    if (len > 0) {
+        rx_buffer[len] = '\0'; // Null-terminate
+        ESP_LOGI(TAG, "Received UART2 command: %s", rx_buffer);
+        return strstr(rx_buffer, "ACK") != NULL; // Accept if "ACK" is received
+    }
+    ESP_LOGW(TAG, "UART2 RX timeout after %d ms", UART2_RX_TIMEOUT_MS);
+    return false;
+}
+
+// Task to monitor belt status
+void belt_monitor_task(void *pvParameters)
+{
+    char uart_buf[128];
+    TickType_t current_time, time_since_last_drop;
+
+    while (1)
+    {
+        current_time = xTaskGetTickCount();
+        uint32_t voltage = read_voltage();
+
+        // Check for voltage drop
+        if (voltage < VOLTAGE_THRESHOLD)
+        {
+            if (!first_drop_detected)
+            {
+                // First drop: initialize timing
+                first_drop_detected = true;
+                last_drop_time = current_time;
+#ifdef __DEBUG
+                snprintf(uart_buf, sizeof(uart_buf), "STATUS:First Loop detected,Value:%ld \n", voltage);
+                ESP_LOGI(TAG, "%s", uart_buf);
+#elif __PRODUCTION
+                snprintf(uart_buf, sizeof(uart_buf), "STATUS:First Loop detected,Value:%ld \n", voltage);
+#endif
+                sendDatatoPC(uart_buf);
+                // wait_for_uart2_command();
+                snprintf(uart_buf, sizeof(uart_buf), "First Loop detected, Value: %ld \n", voltage);
+                ESP_LOGI(TAG, "%s", uart_buf);
+                sendDatatoPC(uart_buf);
+            }
+            else
+            {
+                // Subsequent drop: calculate interval
+                TickType_t interval = current_time - last_drop_time;
+                prev_interval = interval; // Update previous interval
+                last_drop_time = current_time;
+                belt_ripped = 0;
+                gpio_set_level(RELAY_PIN, 0); // Relay off
+                snprintf(uart_buf, sizeof(uart_buf), "STATUS:Belt OK,Value:%ld ,Interval:%ld ms\n",
+                         voltage, interval * portTICK_PERIOD_MS);
+                ESP_LOGI(TAG, "%s", uart_buf);
+                sendDatatoPC(uart_buf);
+            }
+        }
+        else
+        {
+            // No voltage drop: check if time exceeds threshold
+            if (first_drop_detected)
+            {
+                time_since_last_drop = current_time - last_drop_time;
+                if (time_since_last_drop > (TickType_t)(prev_interval * RIP_THRESHOLD_FACTOR))
+                {
+                    belt_ripped = 1;
+                    gpio_set_level(gled, 1); // Green LED on
+                    gpio_set_level(RELAY_PIN, 1); // Relay on
+                    snprintf(uart_buf, sizeof(uart_buf), "STATUS:Belt RIPPED,Value:%ld ,Time since last drop:%ld ms\n",
+                             voltage, time_since_last_drop * portTICK_PERIOD_MS);
+                    ESP_LOGE(TAG, "%s", uart_buf);
+                    sendDatatoPC(uart_buf);
+                    vTaskDelay(10);
+                    gpio_set_level(gled, 0); // Green LED off
+                }
+                else
+                {
+                    snprintf(uart_buf, sizeof(uart_buf), "No Loop Detecting, Value: %ld , Time since last drop: %ld ms\n",
+                             voltage, time_since_last_drop * portTICK_PERIOD_MS);
+                    ESP_LOGI(TAG, "%s", uart_buf);
+                    sendDatatoPC(uart_buf);
+                }
+            }
+            else
+            {
+                snprintf(uart_buf, sizeof(uart_buf), "Waiting for Loop detection, Value: %ld\n", voltage);
+                ESP_LOGI(TAG, "%s", uart_buf);
+                sendDatatoPC(uart_buf);
+                gpio_set_level(RELAY_PIN, 0); // Relay off
+            }
+        }
+
+        // Send status to UART1 (logging)
+        // uart_write_bytes(UART1_NUM, uart_buf, strlen(uart_buf));
+
+        // Wait for next check
+        vTaskDelay(CHECK_INTERVAL_MS / portTICK_PERIOD_MS);
+    }
 }
 
 // Function to initialize UART
+void uart_init(void)
+{
+    const uart_config_t uart_config = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+
+    // Initialize UART1 (logging, default pins: GPIO1 TX, GPIO3 RX)
+    ESP_ERROR_CHECK(uart_driver_install(UART1_NUM, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_param_config(UART1_NUM, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(UART1_NUM, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_LOGI(TAG, "UART1 initialized (logging, default pins)");
+
+    // Initialize UART2 (status/commands, GPIO19 TX, GPIO18 RX)
+    ESP_ERROR_CHECK(uart_driver_install(UART2_NUM, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_param_config(UART2_NUM, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(UART2_NUM, TXD_PIN_2, RXD_PIN_2, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_LOGI(TAG, "UART2 initialized (TX: GPIO19, RX: GPIO18)");
+}
+
 void initialize_uart(void)
 {
     uart_init();
-    uart_port_t uart1 = UART_NUM_1;
-    uart_port_t uart2 = UART_NUM_2;
-    xTaskCreate(rx_task, "uart_rx_task_1", 1024 * 8, &uart1, configMAX_PRIORITIES - 1, NULL);
-    xTaskCreate(rx_task, "uart_rx_task_2", 1024 * 8, &uart2, configMAX_PRIORITIES - 1, NULL);
+    uart_port_t uart2 = UART2_NUM;
+    xTaskCreate(belt_monitor_task, "belt_monitor_task", 4096, NULL, 5, NULL);
+    // xTaskCreate(rx_task, "uart_rx_task_2", 1024 * 8, &uart2, configMAX_PRIORITIES - 1, NULL);
 }
 
-// Function to initialize OTA
-void initialize_ota(void)
+// Function to initialize NVS
+void initialize_nvs(void)
 {
-    ESP_LOGI("OTA", "Initializing OTA...");
-    // OTA initialization logic
-    xTaskCreate(&simple_ota_example_task, "ota_example_task", 8192, NULL, 5, NULL);
-}
-
-#include "nvs_flash.h"
-#include "nvs.h"
-
-// Function to initialize default configuration in NVS if not found
-void initialize_nvs_defaults(void) {
-    nvs_handle_t my_handle;
-    esp_err_t err = nvs_open("namespace_1", NVS_READWRITE, &my_handle);
-
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGI("NVS", "Namespace not found. Initializing default values.");
-        
-        // Open the NVS handle for writing
-        err = nvs_open("namespace_1", NVS_READWRITE, &my_handle);
-        if (err == ESP_OK) {
-            // Write default values
-            nvs_set_str(my_handle, "ST_SSID", "default_ssid");
-            nvs_set_str(my_handle, "ST_PASSWORD", "default_password");
-            nvs_set_str(my_handle, "delay", "1000");
-            nvs_set_str(my_handle, "URL", "http://lims:");
-            nvs_commit(my_handle); // Commit to save changes
-            ESP_LOGI("NVS", "Default values written to NVS.");
-        }
-    } else if (err == ESP_OK) {
-        ESP_LOGI("NVS", "Namespace found, no need to initialize.");
-    } else {
-        ESP_LOGE("NVS", "Error opening NVS namespace: %s", esp_err_to_name(err));
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
     }
-
-    nvs_close(my_handle); // Close the NVS handle after use
+    ESP_ERROR_CHECK(ret);
 }
 
 // Application main function
 void app_main(void)
 {
-    char *TAG = "main";
-
     // Configure LEDs
     configure_led();
-    led_on_off(yled, 1); // Indicate system startup
-    gpio_set_level(GPIO_NUM_27, 1); // turn of green led
 
     // Initialize NVS
-    esp_err_t ret = nvs_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize NVS");
-        return;
-    }
-    
-    // check if nvs is already written
-    initialize_nvs_defaults();
+    initialize_nvs();
+    ESP_LOGI(TAG, "NVS initialized");
 
-    // Define your configuration structure
-    dataLoggerConfig config;
-    // config.ST_SSID = "Me";
-    // config.ST_PASSWORD = "76919716";
-    // config.delay = "10";  // Example delay value
-    // config.URL = "http://lims.data.highlandenergynig.com/api/collect-data-store";
+    // Initialize ADC
+    initialize_adc();
+    ESP_LOGI(TAG, "ADC initialized");
 
-    // // Write configuration to NVS
-    // if (write_config_in_NVS(&config)) {
-    //     ESP_LOGI(TAG, "Configuration saved successfully!");
-    // } else {
-    //     ESP_LOGE(TAG, "Failed to save configuration.");
-    // }
-
-    // Attempt to read the configuration from NVS
-    if (read_config_from_NVS(&config)) {
-        ESP_LOGI(TAG, "Configuration loaded: SSID=%s, PASSWORD=%s, DELAY=%s, URL=%s",
-                 config.ST_SSID, config.ST_PASSWORD, config.delay, config.URL);
-    } else {
-        ESP_LOGE(TAG, "Failed to load configuration.");
-    }
-
-    // Initialize UART communication
+    // Initialize UART
     initialize_uart();
     ESP_LOGI(TAG, "UART initialized");
 
-    // Initialize network interfaces and Wi-Fi
-    // if (esp_netif_init() != ESP_OK)
-    // {
-    //     ESP_LOGE(TAG, "Failed to initialize network interface");
-    //     return; // Handle error appropriately
-    // }
-    // ESP_LOGI(TAG, "Network interfaces initialized");
-    // if (esp_event_loop_create_default() != ESP_OK)
-    // {
-    //     ESP_LOGE(TAG, "Failed to create event loop");
-    //     return; // Handle error appropriately
-    // }
-    // dataLoggerConfig config;
-    ESP_LOGI(TAG, "Initializing wifi");
-    initialize_wifi(&config);
-    ESP_LOGI(TAG, "Wifi initialized");
-    
+    // Startup delay
+    ESP_LOGI(TAG, "Waiting %ld ms for belt to reach speed", STARTUP_DELAY_MS);
+    vTaskDelay(STARTUP_DELAY_MS / portTICK_PERIOD_MS);
+
+    // Create belt monitoring task
+    // xTaskCreate(belt_monitor_task, "belt_monitor_task", 4096, NULL, 5, NULL);
+
     ESP_LOGI(TAG, "Initialization complete");
-
-    // Initialize OTA
-    // initialize_ota();
-
-    // Initialize and serve the web page
-    initi_web_page_buffer();
-    setup_server();
-
-    // Post initialization logic
 }
