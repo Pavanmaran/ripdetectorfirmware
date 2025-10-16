@@ -12,7 +12,7 @@
 #define ADC_PIN ADC2_CHANNEL_0     // GPIO4 for WPT receiver
 #define RELAY_PIN GPIO_NUM_5       // Relay (belt rip indication)
 #define gled GPIO_NUM_27           // Green LED (power indication)
-#define VOLTAGE_THRESHOLD 1500     // Threshold in  (adjust based on WPT module)
+#define VOLTAGE_THRESHOLD 100     // Threshold in  (adjust based on WPT module)
 #define CHECK_INTERVAL_MS 1000     // Check every 1 second for finer timing
 #define STARTUP_DELAY_MS 20000     // 20 seconds startup delay
 #define RIP_THRESHOLD_FACTOR 1.5   // 1.5x previous interval for rip detection
@@ -38,6 +38,15 @@ static TickType_t prev_interval = DEFAULT_INTERVAL_MS / portTICK_PERIOD_MS;
 static bool first_drop_detected = false;
 static uint32_t prev_voltage = 0; // To store previous voltage reading
 
+// create a enum for indicators
+enum {
+    LED_ON,
+    LED_OFF,
+    RIP_INDICATOR
+}indicator;
+
+void loopDetectedIndicator(void);
+void ripDetectionIndicator(void);
 // Function to configure GPIO pins for LEDs
 void configure_led(void)
 {
@@ -49,9 +58,34 @@ void configure_led(void)
         .intr_type = GPIO_INTR_DISABLE
     };
     ESP_ERROR_CHECK(gpio_config(&io_conf));
-    gpio_set_level(gled, GLED_ACTIVE_LOW ? 0 : 1); // Green LED on (active-low)
+    gpio_set_level(gled, GLED_ACTIVE_LOW ? 1 : 0); // Green LED on (active-low)
     gpio_set_level(RELAY_PIN, 0); // Relay off
     ESP_LOGI(TAG, "LEDs and relay configured");
+}
+
+// create a task to multiple indicators LEDON, LEDOFF, RIPPED
+void EventIndicatorTask(void *pvParameters) {
+    while (1) {
+        if (indicator == LED_ON) {
+            gpio_set_level(gled, GLED_ACTIVE_LOW ? 0 : 1); // Green LED off
+            // gpio_set_level(gled, GLED_ACTIVE_LOW ? 0 : 1); // On
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            ESP_LOGI(TAG, "LED ON");
+        } else if (indicator == LED_OFF) {
+            gpio_set_level(gled, GLED_ACTIVE_LOW ? 1 : 0); // Green LED on
+            // gpio_set_level(gled, GLED_ACTIVE_LOW ? 1 : 0); // Off
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            ESP_LOGI(TAG, "LED OFF");
+        } else if (indicator == RIP_INDICATOR) {
+            while (indicator == RIP_INDICATOR) { // Blink until state changes
+                gpio_set_level(gled, GLED_ACTIVE_LOW ? 1 : 0); // Off
+                vTaskDelay(pdMS_TO_TICKS(200));
+                gpio_set_level(gled, GLED_ACTIVE_LOW ? 0 : 1); // On
+                vTaskDelay(pdMS_TO_TICKS(200));
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(100)); // Small delay to prevent CPU hogging
+    }
 }
 
 // Function to initialize ADC
@@ -97,88 +131,71 @@ bool wait_for_uart2_command(void)
     return false;
 }
 
-// Task to monitor belt status
-void belt_monitor_task(void *pvParameters)
-{
+void belt_monitor_task(void *pvParameters) {
     char uart_buf[128];
     TickType_t current_time, time_since_last_drop;
 
-    while (1)
-    {
+    // Wait for initial ADC reading
+    vTaskDelay(pdMS_TO_TICKS(500));
+    uint32_t voltage = read_voltage();
+    prev_voltage = voltage; // Initialize after first reading
+
+    while (1) {
         current_time = xTaskGetTickCount();
-        uint32_t voltage = read_voltage();
-
-        // Initialize prev_voltage on the first reading
-        if (prev_voltage == 0) {
-            prev_voltage = voltage;
-            snprintf(uart_buf, sizeof(uart_buf), "Initializing, Value: %ld\n", voltage);
-            ESP_LOGI(TAG, "%s", uart_buf);
-            sendDatatoPC(uart_buf);
-        }
-
+        voltage = read_voltage();
         int voltage_diff = prev_voltage - voltage;
 
-        // Check for significant voltage drop as loop detection
-        if (!first_drop_detected && voltage_diff > 50)
-        {
-            // First loop detected
+        if (!first_drop_detected && voltage_diff > VOLTAGE_THRESHOLD) {
             first_drop_detected = true;
             last_drop_time = current_time;
-            prev_voltage = voltage; // Update to the new voltage after drop
+            prev_voltage = voltage;
             snprintf(uart_buf, sizeof(uart_buf), "STATUS:First Loop detected, Value: %ld\n", voltage);
             ESP_LOGI(TAG, "%s", uart_buf);
             sendDatatoPC(uart_buf);
+            indicator = LED_OFF;
         }
-        else if (first_drop_detected && voltage_diff > 50)
-        {
-            // Subsequent loop detected
+        else if (first_drop_detected && voltage_diff > VOLTAGE_THRESHOLD) {
             TickType_t interval = current_time - last_drop_time;
-            if (interval > CHECK_INTERVAL_MS / portTICK_PERIOD_MS) { // Avoid noise
-                prev_interval = interval; // Update previous interval
+            if (interval > CHECK_INTERVAL_MS / portTICK_PERIOD_MS) {
+                prev_interval = interval;
                 last_drop_time = current_time;
                 belt_ripped = 0;
-                gpio_set_level(RELAY_PIN, 0); // Relay off
+                gpio_set_level(RELAY_PIN, RELAY_ACTIVE_LOW ? 1 : 0); // Relay off
                 snprintf(uart_buf, sizeof(uart_buf), "STATUS:Loop detected, Value: %ld, Interval: %ld\n",
                          voltage, interval * portTICK_PERIOD_MS);
                 ESP_LOGI(TAG, "%s", uart_buf);
                 sendDatatoPC(uart_buf);
-                prev_voltage = voltage; // Update to the new voltage after drop
+                indicator = LED_OFF;
+                prev_voltage = voltage;
             }
         }
-        else if (first_drop_detected)
-        {
-            // No loop detected: check if time exceeds threshold for rip detection
+        else if (first_drop_detected) {
             time_since_last_drop = current_time - last_drop_time;
-            if (time_since_last_drop > (TickType_t)(prev_interval * RIP_THRESHOLD_FACTOR))
-            {
+            if (time_since_last_drop > (TickType_t)(prev_interval * RIP_THRESHOLD_FACTOR)) {
                 belt_ripped = 1;
-                gpio_set_level(RELAY_PIN, 1); // Relay on (active high)
-                gpio_set_level(gled, 1); // Blink LED (active low, turn off)
-                snprintf(uart_buf, sizeof(uart_buf), "STATUS:Belt RIPPED, Value: %ld, %ld\n",
+                gpio_set_level(RELAY_PIN, RELAY_ACTIVE_LOW ? 0 : 1); // Relay on
+                snprintf(uart_buf, sizeof(uart_buf), "STATUS:Belt RIPPED, Value: %ld, Time: %ld\n",
                          voltage, time_since_last_drop * portTICK_PERIOD_MS);
                 ESP_LOGE(TAG, "%s", uart_buf);
                 sendDatatoPC(uart_buf);
-                vTaskDelay(100); // Short blink
-                gpio_set_level(gled, 0); // LED back on
+                indicator = RIP_INDICATOR;
             }
-            else
-            {
-                snprintf(uart_buf, sizeof(uart_buf), "No Loop Detecting, Value: %ld, %ld\n",
+            else {
+                snprintf(uart_buf, sizeof(uart_buf), "STATUS:No Loop Detecting, Value: %ld, Time: %ld\n",
                          voltage, time_since_last_drop * portTICK_PERIOD_MS);
                 ESP_LOGI(TAG, "%s", uart_buf);
                 sendDatatoPC(uart_buf);
+                indicator = LED_ON;
             }
         }
-        else
-        {
-            snprintf(uart_buf, sizeof(uart_buf), "Waiting for Loop detection, Value: %ld\n", voltage);
+        else {
+            snprintf(uart_buf, sizeof(uart_buf), "STATUS:Waiting for Loop detection, Value: %ld\n", voltage);
             ESP_LOGI(TAG, "%s", uart_buf);
             sendDatatoPC(uart_buf);
+            indicator = LED_ON;
         }
 
-        prev_voltage = voltage; // Update previous voltage after all checks
-
-        // Wait for next check
+        prev_voltage = voltage;
         vTaskDelay(CHECK_INTERVAL_MS / portTICK_PERIOD_MS);
     }
 }
@@ -187,7 +204,7 @@ void belt_monitor_task(void *pvParameters)
 void uart_init(void)
 {
     const uart_config_t uart_config = {
-        .baud_rate = 9600,
+        .baud_rate = 115200,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -245,6 +262,10 @@ void app_main(void)
     // Initialize UART
     initialize_uart();
     ESP_LOGI(TAG, "UART initialized");
+
+    // create a task to multiple indicators LEDON, LEDOFF, RIPPED
+    xTaskCreate(EventIndicatorTask, "EventIndicatorTask", 4096, NULL, 5, NULL);
+    ESP_LOGI(TAG, "EventIndicatorTask created");
 
     // Startup delay
     ESP_LOGI(TAG, "Waiting %ld ms for belt to reach speed", STARTUP_DELAY_MS);
