@@ -1,86 +1,87 @@
-/* UART asynchronous example, that uses separate RX and TX tasks for two UART ports
+/* UART implementation with ESP32-S3 USB CDC support */
 
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
 #include "uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_mac.h"
 
 // Variable to hold the MAC address
-uint8_t esp_mac_address[6]; // MAC address is 6 bytes long
+uint8_t esp_mac_address[6];
 
-// #define HEX2STR
 static const char *TAG = "UART";
 
 char *uint8_t_to_char(uint8_t *data, size_t size)
 {
-    // Allocate memory for the char array
-    char *result = (char *)malloc(size + 1); // +1 for null terminator
-
-    // Check if memory allocation was successful
+    char *result = (char *)malloc(size + 1);
     if (result == NULL)
     {
-        return NULL; // Allocation failed
+        return NULL;
     }
 
-    // Copy each element of the uint8_t array to the char array
     for (size_t i = 0; i < size; i++)
     {
         result[i] = (char)data[i];
     }
-
-    // Add null terminator at the end of the char array
     result[size] = '\0';
-
     return result;
 }
 
 void uart_init(void)
 {
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+    // ESP32-S3: Initialize USB Serial JTAG for PC communication
+    usb_serial_jtag_driver_config_t usb_config = {
+        .rx_buffer_size = RX_BUF_SIZE * 2,
+        .tx_buffer_size = RX_BUF_SIZE * 2,
+    };
+    ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb_config));
+    ESP_LOGI(TAG, "USB Serial JTAG initialized for PC communication");
+#else
+    // ESP32: Initialize UART2 for PC communication
     const uart_config_t uart_config = {
         .baud_rate = 115200,
-        // .baud_rate = 2400,  // for meteler only
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    // Initialize and configure the first UART port
-    uart_driver_install(UART_NUM_1, RX_BUF_SIZE * 2, 0, 0, NULL, 0);
-    uart_param_config(UART_NUM_1, &uart_config);
-    uart_set_pin(UART_NUM_1, TXD_PIN_1, RXD_PIN_1, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-
-    // Initialize and configure the second UART port
-    uart_driver_install(UART_NUM_2, RX_BUF_SIZE * 2, 0, 0, NULL, 0);
-    uart_param_config(UART_NUM_2, &uart_config);
-    uart_set_pin(UART_NUM_2, TXD_PIN_2, RXD_PIN_2, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-
-    // get esp mac address
+    
+    ESP_ERROR_CHECK(uart_driver_install(UART_PC_NUM, RX_BUF_SIZE * 2, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_param_config(UART_PC_NUM, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(UART_PC_NUM, TXD_PIN_PC, RXD_PIN_PC, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_LOGI(TAG, "UART%d initialized for PC (TX: GPIO%d, RX: GPIO%d)", UART_PC_NUM, TXD_PIN_PC, RXD_PIN_PC);
+#endif
 }
 
-int sendData(const char *logName, const char *data, uart_port_t uart_num)
+void sendDatatoPC(const char *data)
 {
     const int len = strlen(data);
-    const int txBytes = uart_write_bytes(uart_num, data, len);
-    ESP_LOGI(logName, "Sent from UART %d: Wrote %d bytes", uart_num, txBytes);
-    return txBytes;
+    
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+    // ESP32-S3: Use USB Serial JTAG
+    int txBytes = usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(100));
+    // Don't log every transmission to avoid clutter
+#else
+    // ESP32: Use UART2
+    int txBytes = uart_write_bytes(UART_PC_NUM, data, len);
+#endif
+    
+    if (txBytes < len)
+    {
+        ESP_LOGW(TAG, "Only sent %d of %d bytes to PC", txBytes, len);
+    }
 }
 
 void tx_task(void *arg)
 {
     static const char *TX_TASK_TAG = "TX_TASK";
     esp_log_level_set(TX_TASK_TAG, ESP_LOG_INFO);
-    uart_port_t uart_num = *((uart_port_t *)arg);
+    
     while (1)
     {
-        sendData(TX_TASK_TAG, "Hello world", uart_num);
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        sendDatatoPC("Heartbeat\n");
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
@@ -88,7 +89,6 @@ void hex_to_hexStr(uint8_t *hexdata, size_t hexdataSize, char *hexstrData, int h
 {
     if (hexstrDataLen < hexdataSize * 2 + 1)
     {
-        // Not enough space in hexstrData to store the hex string
         return;
     }
 
@@ -96,81 +96,67 @@ void hex_to_hexStr(uint8_t *hexdata, size_t hexdataSize, char *hexstrData, int h
     {
         sprintf(&hexstrData[i * 2], "%02X", hexdata[i]);
     }
-
-    hexstrData[hexdataSize * 2] = '\0'; // Null-terminate the string
+    hexstrData[hexdataSize * 2] = '\0';
 }
 
 void rx_task(void *arg)
 {
-    dataLoggerConfig read_config_struct;
-    if (read_config_from_NVS(&read_config_struct) == 0)
-    {
-        ESP_LOGI("Error NVS Reading", "The DATALOGGER is not configured yet");
-    }
     static const char *RX_TASK_TAG = "RX_TASK";
     esp_log_level_set(RX_TASK_TAG, ESP_LOG_INFO);
+    
     uint8_t *data = (uint8_t *)malloc(RX_BUF_SIZE + 1);
     if (data == NULL)
     {
         ESP_LOGE(RX_TASK_TAG, "Memory allocation failed for rx buffer");
-        return; // Handle memory allocation failure
+        vTaskDelete(NULL);
+        return;
     }
-    uart_port_t uart_num = *((uart_port_t *)arg);
+
     while (1)
     {
-        const int rxBytes = uart_read_bytes(uart_num, data, RX_BUF_SIZE, 5000 / portTICK_PERIOD_MS);
+        int rxBytes = 0;
+        
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+        // ESP32-S3: Read from USB Serial JTAG
+        rxBytes = usb_serial_jtag_read_bytes(data, RX_BUF_SIZE, pdMS_TO_TICKS(5000));
+#else
+        // ESP32: Read from UART2
+        rxBytes = uart_read_bytes(UART_PC_NUM, data, RX_BUF_SIZE, pdMS_TO_TICKS(5000));
+#endif
+
         if (rxBytes > 0)
         {
             data[rxBytes] = 0;
 
-            ESP_LOGI(RX_TASK_TAG, "Received on UART %d: Read %d bytes: '%s'", uart_num, rxBytes, data);
+            ESP_LOGI(RX_TASK_TAG, "Received from PC: Read %d bytes: '%s'", rxBytes, data);
             ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
-#ifndef HEX2STR
-            // convert uint8_t array to char array
-            char *char_data = uint8_t_to_char(data, RX_BUF_SIZE);
-#endif
-#ifdef HEX2STR
-            // Allocate space for the hex string
-            char char_data[2 * RX_BUF_SIZE + 1];
-            hex_to_hexStr(data, rxBytes, char_data, sizeof(char_data));
-            printf("Hex string: %s\n", char_data);
-#endif
-            if (rxBytes > 0)
+
+            char *char_data = uint8_t_to_char(data, rxBytes);
+            
+            if (char_data != NULL)
             {
                 printf("Converted data: %s\n", char_data);
 
-                // blink gled for 1 second
+                // Blink LED for 1 second
                 gpio_set_level(GPIO_NUM_27, 0);
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 gpio_set_level(GPIO_NUM_27, 1);
 
-                if (uart_num == 2)
-                {
-                    // send data to server with mac
-                    esp_read_mac(esp_mac_address, ESP_MAC_WIFI_STA);
-                    ESP_LOGI(TAG, "ESP MAC: %02X:%02X:%02X:%02X:%02X:%02X",
-                             esp_mac_address[0], esp_mac_address[1], esp_mac_address[2],
-                             esp_mac_address[3], esp_mac_address[4], esp_mac_address[5]);
+                // Get MAC address
+                esp_read_mac(esp_mac_address, ESP_MAC_WIFI_STA);
+                ESP_LOGI(TAG, "ESP MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                         esp_mac_address[0], esp_mac_address[1], esp_mac_address[2],
+                         esp_mac_address[3], esp_mac_address[4], esp_mac_address[5]);
 
-                    char mac_str[18]; // String to hold MAC address
-                    sprintf(mac_str, "%02X:%02X:%02X:%02X:%02X:%02X",
-                            esp_mac_address[0], esp_mac_address[1], esp_mac_address[2],
-                            esp_mac_address[3], esp_mac_address[4], esp_mac_address[5]);
-                    // create json
-                    char *data = createJSON("IOT DATA LOGGER", mac_str, char_data);
-
-                    post_rest_function(read_config_struct.URL, data);
-                    free(data);
-                }
-#ifndef HEX2STR
-                free(char_data); // Don't forget to free the memory
-#endif
+                free(char_data);
             }
             else
             {
-                printf("Memory allocation failed.\n");
+                ESP_LOGE(RX_TASK_TAG, "Memory allocation failed for char_data");
             }
         }
     }
+    
     free(data);
+    vTaskDelete(NULL);
 }

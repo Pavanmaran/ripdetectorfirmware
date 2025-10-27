@@ -3,6 +3,10 @@
 
 # Simple OTA example
 
+idf_component_register(SRCS "wifi.c" "main.c" "simple_ota_example.c" "server_component.c" "non_volatile_storage.c" "uart.c" "wifiStAp.c"
+                    INCLUDE_DIRS "."
+                    EMBED_TXTFILES ${project_dir}/server_certs/ca_cert.pem)
+                    
 This example is based on `esp_https_ota` component's APIs.
 
 ## Configuration
