@@ -46,8 +46,8 @@ static const char *TAG = "BELT";
 
 // Common Configuration (from your working code)
 #define VOLTAGE_THRESHOLD 100
-#define CHECK_INTERVAL_MS 1000
-#define SEND_INTERVAL_MS 5000
+#define CHECK_INTERVAL_MS 500
+#define SEND_INTERVAL_MS 1000
 #define RIP_THRESHOLD_FACTOR 1.5
 #define DEFAULT_INTERVAL_MS 10000
 #define ADC_ATTEN ADC_ATTEN_DB_11
@@ -173,10 +173,10 @@ void sendDatatoPC(const char *data) {
 void EventIndicatorTask(void *pvParameters) {
     while (1) {
         if (indicator == LED_ON) {
-            gpio_set_level(LED_PIN, LED_ACTIVE_LOW ? 0 : 1);
+            gpio_set_level(LED_PIN, LED_ACTIVE_LOW ? 1 : 0);
             vTaskDelay(pdMS_TO_TICKS(1000));
         } else if (indicator == LED_OFF) {
-            gpio_set_level(LED_PIN, LED_ACTIVE_LOW ? 1 : 0);
+            gpio_set_level(LED_PIN, LED_ACTIVE_LOW ? 0 : 1);
             vTaskDelay(pdMS_TO_TICKS(1000));
         } else if (indicator == RIP_INDICATOR) {
             while (indicator == RIP_INDICATOR) {
@@ -191,7 +191,6 @@ void EventIndicatorTask(void *pvParameters) {
 }
 
 // ==================== BELT MONITORING TASK ====================
-
 void belt_monitor_task(void *pvParameters) {
     char uart_buf[128];
     TickType_t current_time, time_since_last_drop;
@@ -205,10 +204,8 @@ void belt_monitor_task(void *pvParameters) {
         current_time = xTaskGetTickCount();
         voltage = read_voltage();
         int voltage_diff = prev_voltage - voltage;
-        
-        bool should_send = (current_time - last_send_time) >= (SEND_INTERVAL_MS / portTICK_PERIOD_MS);
 
-        // First loop detection
+        // First loop detection - SEND IMMEDIATELY
         if (!first_drop_detected && voltage_diff > VOLTAGE_THRESHOLD) {
             first_drop_detected = true;
             last_drop_time = current_time;
@@ -216,12 +213,10 @@ void belt_monitor_task(void *pvParameters) {
             rip_sent = false;
             
             snprintf(uart_buf, sizeof(uart_buf), "S:1,V:%lu,I:0,T:0\n", (unsigned long)voltage);
-            ESP_LOGI(TAG, "First loop: %lu mV", (unsigned long)voltage);
             sendDatatoPC(uart_buf);
-            last_send_time = current_time;
             indicator = LED_OFF;
         }
-        // Loop detection (belt OK)
+        // Loop detection - SEND IMMEDIATELY
         else if (first_drop_detected && voltage_diff > VOLTAGE_THRESHOLD) {
             TickType_t interval = current_time - last_drop_time;
             if (interval > CHECK_INTERVAL_MS / portTICK_PERIOD_MS) {
@@ -234,14 +229,12 @@ void belt_monitor_task(void *pvParameters) {
                 uint32_t interval_ms = interval * portTICK_PERIOD_MS;
                 snprintf(uart_buf, sizeof(uart_buf), "S:2,V:%lu,I:%lu,T:0\n", 
                          (unsigned long)voltage, (unsigned long)interval_ms);
-                ESP_LOGI(TAG, "Loop OK: %lu ms", (unsigned long)interval_ms);
                 sendDatatoPC(uart_buf);
-                last_send_time = current_time;
                 indicator = LED_OFF;
                 prev_voltage = voltage;
             }
         }
-        // Check for belt rip
+        // Belt rip - SEND IMMEDIATELY (only once)
         else if (first_drop_detected) {
             time_since_last_drop = current_time - last_drop_time;
             if (time_since_last_drop > (TickType_t)(prev_interval * RIP_THRESHOLD_FACTOR)) {
@@ -252,32 +245,29 @@ void belt_monitor_task(void *pvParameters) {
                     uint32_t time_ms = time_since_last_drop * portTICK_PERIOD_MS;
                     snprintf(uart_buf, sizeof(uart_buf), "S:3,V:%lu,I:0,T:%lu\n",
                              (unsigned long)voltage, (unsigned long)time_ms);
-                    ESP_LOGE(TAG, "BELT RIPPED! %lu ms", (unsigned long)time_ms);
                     sendDatatoPC(uart_buf);
                     rip_sent = true;
-                    last_send_time = current_time;
                 }
                 indicator = RIP_INDICATOR;
             }
-            else if (should_send) {
+            else {
+                // Send periodic status - faster than before
                 uint32_t time_ms = time_since_last_drop * portTICK_PERIOD_MS;
                 snprintf(uart_buf, sizeof(uart_buf), "S:4,V:%lu,I:0,T:%lu\n",
                          (unsigned long)voltage, (unsigned long)time_ms);
                 sendDatatoPC(uart_buf);
-                last_send_time = current_time;
                 indicator = LED_ON;
             }
         }
-        // Waiting for loop
-        else if (should_send) {
+        // Waiting for loop - send periodic updates
+        else {
             snprintf(uart_buf, sizeof(uart_buf), "S:0,V:%lu,I:0,T:0\n", (unsigned long)voltage);
             sendDatatoPC(uart_buf);
-            last_send_time = current_time;
             indicator = LED_ON;
         }
 
         prev_voltage = voltage;
-        vTaskDelay(CHECK_INTERVAL_MS / portTICK_PERIOD_MS);
+        vTaskDelay(CHECK_INTERVAL_MS / portTICK_PERIOD_MS);  // Now 500ms
     }
 }
 
@@ -311,8 +301,8 @@ void app_main(void) {
              (unsigned long)test_voltage, test_voltage / 1000.0);
 
     // Create tasks
-    xTaskCreate(EventIndicatorTask, "EventIndicatorTask", 4096, NULL, 5, NULL);
-    xTaskCreate(belt_monitor_task, "belt_monitor_task", 4096, NULL, 5, NULL);
+    xTaskCreate(EventIndicatorTask, "EventIndicatorTask", 4096, NULL, 3, NULL);
+    xTaskCreate(belt_monitor_task, "belt_monitor_task", 4096, NULL, 8, NULL);
 
     ESP_LOGI(TAG, "System initialized - all tasks running");
 }
