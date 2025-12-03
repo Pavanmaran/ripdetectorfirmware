@@ -1,3 +1,4 @@
 dependencies:
-  protocol_examples_common:
-    path: ${IDF_PATH}/examples/common_components/protocol_examples_common
+  esp-idf-lib/ina260: "^1.0.11"
+  esp-idf-lib/i2cdev: "^2.0.4"
+

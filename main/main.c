@@ -7,6 +7,10 @@
 #include <stdio.h>
 #include <string.h>
 
+// NEW: INA260 includes
+#include "ina260.h"
+#include "i2cdev.h"
+
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 #include "driver/usb_serial_jtag.h"
 #include "driver/uart.h"
@@ -15,6 +19,14 @@
 #endif
 
 static const char *TAG = "BELT";
+
+// ==================== I2C CONFIGURATION ====================
+#define I2C_MASTER_SCL_IO GPIO_NUM_22
+#define I2C_MASTER_SDA_IO GPIO_NUM_21
+#define INA260_I2C_ADDR 0x40  // Default address
+
+// Global INA260 device
+static ina260_t ina260_dev;
 
 // ==================== PLATFORM-SPECIFIC CONFIGURATION ====================
 
@@ -79,7 +91,7 @@ void configure_led(void) {
         .intr_type = GPIO_INTR_DISABLE
     };
     ESP_ERROR_CHECK(gpio_config(&io_conf));
-    gpio_set_level(LED_PIN, LED_ACTIVE_LOW ? 1 : 0);
+    gpio_set_level(LED_PIN, LED_ACTIVE_LOW ? 0 : 1);
     gpio_set_level(RELAY_PIN, 0);
     
     // CRITICAL: Send to BOTH ESP32 monitor and PC UART
@@ -280,9 +292,63 @@ void belt_monitor_task(void *pvParameters) {
 
 // ==================== MAIN APPLICATION ====================
 
+// ==================== I2C INITIALIZATION ====================
+void initialize_i2c_ina260(void) {
+    // Initialize I2C library
+    ESP_ERROR_CHECK(i2cdev_init());
+    
+    // Initialize INA260 descriptor
+    ESP_ERROR_CHECK(ina260_init_desc(&ina260_dev, INA260_I2C_ADDR, I2C_NUM_0, 
+                                      I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO));
+    
+    // Initialize INA260 device
+    ESP_ERROR_CHECK(ina260_init(&ina260_dev));
+    
+    // Configure averaging & conversion time (CORRECT MACROS)
+    ESP_ERROR_CHECK(ina260_set_config(&ina260_dev, 
+                                       INA260_MODE_CONT_SHUNT_BUS,  // Continuous mode
+                                       INA260_AVG_16,                // 16 samples average
+                                       INA260_CT_1100,               // 1.1ms voltage conversion
+                                       INA260_CT_1100));             // 1.1ms current conversion
+    
+    ESP_LOGI(TAG, "INA260 initialized (SDA=%d, SCL=%d)", I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO);
+}
+
+
+// ==================== INA260 READING TASK ====================
+void ina260_monitor_task(void *pvParameters) {
+    float voltage, current, power;
+    char i2c_buf[128];
+    
+    vTaskDelay(pdMS_TO_TICKS(1000));  // Wait for system stabilization
+    
+    while (1) {
+        // Read INA260 values
+        if (ina260_get_bus_voltage(&ina260_dev, &voltage) == ESP_OK &&
+            ina260_get_current(&ina260_dev, &current) == ESP_OK &&
+            ina260_get_power(&ina260_dev, &power) == ESP_OK) {
+            
+            // Print to monitor
+            ESP_LOGI(TAG, "V=%.3fV, I=%.3fA, P=%.3fW", voltage, current, power);
+            gpio_set_level(LED_PIN, 1);
+            
+            
+            // Send to PC UART
+            snprintf(i2c_buf, sizeof(i2c_buf), "INA:V=%.3f,I=%.3f,P=%.3f\n", 
+                     voltage, current, power);
+            sendDatatoPC(i2c_buf);
+        } else {
+            ESP_LOGE(TAG, "Failed to read INA260");
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(500));  // Read every 500ms
+    }
+}
+
+// ==================== MAIN APPLICATION ====================
 void app_main(void) {
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "  Belt Monitoring System v1.1");
+    ESP_LOGI(TAG, "  Belt Monitoring System v1.2 + INA260");
 #ifdef CONFIG_IDF_TARGET_ESP32S3
     ESP_LOGI(TAG, "  Platform: ESP32-S3");
 #else
@@ -296,20 +362,23 @@ void app_main(void) {
     // Initialize ADC
     initialize_adc();
 
-    // Initialize UART (CRITICAL for ESP32)
+    // Initialize UART
     uart_init();
+    
+    // NEW: Initialize I2C & INA260
+    initialize_i2c_ina260();
 
     // Test voltage reading
     uint32_t test_voltage = read_voltage();
     char test_buf[100];
-    snprintf(test_buf, sizeof(test_buf), "Initial voltage: %lu mV (%.2fV)", 
-             (unsigned long)test_voltage, test_voltage / 1000.0);
+    snprintf(test_buf, sizeof(test_buf), "Initial ADC voltage: %lu mV", 
+             (unsigned long)test_voltage);
     sendLog(test_buf);
 
     // Create tasks
     xTaskCreate(EventIndicatorTask, "EventIndicatorTask", 4096, NULL, 3, NULL);
     xTaskCreate(belt_monitor_task, "belt_monitor_task", 8192, NULL, 8, NULL);
+    xTaskCreate(ina260_monitor_task, "ina260_monitor", 4096, NULL, 5, NULL);  // NEW
 
-    ESP_LOGI(TAG, "✅ System initialized - Continuous logging enabled");
-    ESP_LOGI(TAG, "📊 Logs will appear every %d ms", SEND_INTERVAL_MS);
+    ESP_LOGI(TAG, "✅ System initialized with INA260 support");
 }
