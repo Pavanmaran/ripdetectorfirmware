@@ -216,7 +216,7 @@ void belt_monitor_task(void *pvParameters) {
         int voltage_diff = prev_voltage - voltage;
         
         bool should_send = (current_time - last_send_time) >= (SEND_INTERVAL_MS / portTICK_PERIOD_MS);
-
+        ESP_LOGI(TAG, "V=%lu mV, Diff=%d mV", (unsigned long)voltage, voltage_diff);
         if (!first_drop_detected && voltage_diff > VOLTAGE_THRESHOLD) {
             first_drop_detected = true;
             last_drop_time = current_time;
