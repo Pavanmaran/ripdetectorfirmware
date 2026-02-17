@@ -73,5 +73,5 @@ direct_dependencies:
 - esp-idf-lib/i2cdev
 - esp-idf-lib/ina260
 manifest_hash: 9c9d1fefa8a53167f2cb308250658574c254865c3acac504fd147138216b5382
-target: esp32
+target: esp32s3
 version: 2.0.0

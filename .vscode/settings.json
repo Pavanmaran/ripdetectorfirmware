@@ -12,15 +12,22 @@
   "idf.flashType": "UART",
   "idf.port": "/dev/cu.usbserial-0001",
   "idf.adapterTargetName": "esp32",
-  "idf.portWin": "COM40",
+  "idf.portWin": "COM8",
   "idf.openOcdConfigs": [
-    "interface/ftdi/esp32_devkitj_v1.cfg",
+    "interface/ftdi/esp_ftdi.cfg",
     "target/esp32s3.cfg"
   ],
   "idf.customExtraVars": {
     "OPENOCD_SCRIPTS": "C:\\Espressif\\tools\\openocd-esp32\\v0.12.0-esp32-20240318/openocd-esp32/share/openocd/scripts",
     "IDF_CCACHE_ENABLE": "1",
     "ESP_ROM_ELF_DIR": "C:\\Espressif\\tools\\esp-rom-elfs\\20240305/",
-    "IDF_TARGET": "esp32"
-  }
+    "IDF_TARGET": "esp32s3"
+  },
+  "clangd.path": "C:\\Users\\Lenovo\\.espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=d:\\vscode\\altrobyte\\ripdetectorfirmware\\build"
+  ],
+  "idf.currentSetup": "c:\\Espressif\\frameworks\\esp-idf-v5.5.1"
 }
